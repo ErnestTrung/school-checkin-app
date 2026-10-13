@@ -42,6 +42,20 @@ class CurrentClassTest {
         assertEquals("next", currentClass(week + next, at("15:55"))?.id)
     }
 
+    @Test
+    fun nextClassIsTheFirstWhoseWindowHasNotOpened() {
+        assertEquals("morning", nextClass(week, at("6:00"))?.id)
+        assertEquals("afternoon", nextClass(week, at("10:00"))?.id)
+        assertNull(nextClass(week, at("13:15")))
+    }
+
+    @Test
+    fun storedWeekReadsBackUnchanged() {
+        val exam = entry("exam", start = "07:30", end = "9:00", isExam = true).copy(examShift = "Ca 1", room = "P.301")
+        val stored = week + exam
+        assertEquals(stored.sortedWith(compareBy({ it.date }, { it.startMinutes })), decodeSchedule(encodeSchedule(stored)))
+    }
+
     private fun at(time: String): LocalDateTime {
         val (hour, minute) = time.split(":").map { it.toInt() }
         return today.atTime(hour, minute)

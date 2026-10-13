@@ -1,14 +1,20 @@
 package com.ernestnguyen.schoolcheckin.portal
 
+import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
 import java.time.format.DateTimeParseException
+import java.time.temporal.TemporalAdjusters
+import kotlinx.serialization.SerializationException
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 
 /** What the app keeps from the portal's `edu.system` after sign-in. */
 data class Session(
@@ -43,7 +49,9 @@ data class ScheduleEntry(
     /** `THONGTINCHUYENCAN`, the attendance note the portal shows next to the session. */
     val attendance: String?,
 ) {
-    val timeRange: String get() = "${clock(startHour, startMinute)} – ${clock(endHour, endMinute)}"
+    val startTime: String get() = clock(startHour, startMinute)
+
+    val timeRange: String get() = "$startTime – ${clock(endHour, endMinute)}"
 
     internal val startMinutes: Int
         get() = (startHour.toIntOrNull() ?: 0) * 60 + (startMinute.toIntOrNull() ?: 0)
@@ -65,6 +73,45 @@ internal fun currentClass(entries: List<ScheduleEntry>, now: LocalDateTime): Sch
         .filter { !it.isExam && it.date == now.toLocalDate() }
         .filter { it.startMinutes - EARLY_CHECK_IN_MINUTES <= minute && minute < it.endMinutes }
         .maxByOrNull { it.startMinutes }
+}
+
+/** Today's next class whose check-in window hasn't opened yet (see [currentClass]). */
+internal fun nextClass(entries: List<ScheduleEntry>, now: LocalDateTime): ScheduleEntry? {
+    val minute = now.hour * 60 + now.minute
+    return entries
+        .filter { !it.isExam && it.date == now.toLocalDate() && it.startMinutes - EARLY_CHECK_IN_MINUTES > minute }
+        .minByOrNull { it.startMinutes }
+}
+
+internal fun LocalDate.startOfWeek(): LocalDate = with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
+
+internal fun encodeSchedule(entries: List<ScheduleEntry>): String =
+    JsonArray(entries.map { it.toPortalJson() }).toString()
+
+internal fun decodeSchedule(text: String): List<ScheduleEntry> = try {
+    parseSchedule(Json.parseToJsonElement(text))
+} catch (e: SerializationException) {
+    emptyList()
+}
+
+/** Back to the portal's row shape, so a stored week reads in through [parseSchedule] unchanged. */
+private fun ScheduleEntry.toPortalJson(): JsonObject = buildJsonObject {
+    put("ID", id)
+    put("IDLOPHOCPHAN", classSectionId)
+    put("TENHOCPHAN", subject)
+    put("TENLOPHOCPHAN", classSection)
+    put("TENPHONGHOC", room)
+    put("GIANGVIEN", lecturer)
+    put("NGAYHOC", dateText)
+    put("GIOBATDAU", startHour)
+    put("PHUTBATDAU", startMinute)
+    put("GIOKETTHUC", endHour)
+    put("PHUTKETTHUC", endMinute)
+    put("TIETBATDAU", firstPeriod)
+    put("TIETKETTHUC", lastPeriod)
+    put("PHANLOAI", if (isExam) "LICHTHI" else null)
+    put("CATHI", examShift)
+    put("THONGTINCHUYENCAN", attendance)
 }
 
 internal val PORTAL_DATE: DateTimeFormatter = DateTimeFormatter.ofPattern("dd/MM/yyyy")

@@ -35,6 +35,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -67,7 +69,9 @@ import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import java.time.format.TextStyle
 import java.util.Locale
+import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 
 /** Same palette the portal uses to tell class sections apart. */
 private val CLASS_COLORS = listOf(
@@ -81,11 +85,15 @@ private val CLASS_COLORS = listOf(
 @Composable
 fun ScheduleScreen(
     viewModel: ScheduleViewModel,
+    /** The home-screen widget asked to check in to the current class. */
+    checkInRequested: Boolean,
+    onCheckInRequestHandled: () -> Unit,
     onSignOut: () -> Unit,
     onSessionExpired: () -> Unit,
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val checkIn by viewModel.checkIn.collectAsStateWithLifecycle()
+    val snackbar = remember { SnackbarHostState() }
 
     LaunchedEffect(state.sessionExpired) {
         if (state.sessionExpired) onSessionExpired()
@@ -94,8 +102,21 @@ fun ScheduleScreen(
         viewModel.offerCurrentClass()
         onStopOrDispose {}
     }
+    LaunchedEffect(checkInRequested) {
+        if (checkInRequested) {
+            viewModel.checkInNow()
+            onCheckInRequestHandled()
+        }
+    }
+    LaunchedEffect(viewModel) {
+        viewModel.state.map { it.notice }.filterNotNull().collect { notice ->
+            viewModel.noticeShown()
+            snackbar.showSnackbar(notice)
+        }
+    }
 
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbar) },
         topBar = {
             TopAppBar(
                 title = {

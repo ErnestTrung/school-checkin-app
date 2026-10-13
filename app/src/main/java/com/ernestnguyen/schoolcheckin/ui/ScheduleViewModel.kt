@@ -8,11 +8,11 @@ import com.ernestnguyen.schoolcheckin.portal.PublicIp
 import com.ernestnguyen.schoolcheckin.portal.ScheduleEntry
 import com.ernestnguyen.schoolcheckin.portal.SessionExpiredException
 import com.ernestnguyen.schoolcheckin.portal.currentClass
+import com.ernestnguyen.schoolcheckin.portal.nextClass
+import com.ernestnguyen.schoolcheckin.portal.startOfWeek
 import java.io.IOException
-import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.LocalDateTime
-import java.time.temporal.TemporalAdjusters
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -29,6 +29,8 @@ data class ScheduleUiState(
     val loading: Boolean = false,
     val error: String? = null,
     val sessionExpired: Boolean = false,
+    /** One-off message for a snackbar. */
+    val notice: String? = null,
 ) {
     val weekDays: List<LocalDate> get() = (0L..6L).map { weekStart.plusDays(it) }
     val dayEntries: List<ScheduleEntry> get() = entries.filter { it.date == selectedDay }
@@ -48,6 +50,8 @@ data class CheckInUiState(
 class ScheduleViewModel(
     private val api: PortalApi,
     private val fallbackIp: String,
+    /** Receives the current week whenever it loads, for the home-screen widget. */
+    private val onCurrentWeekLoaded: (weekStart: LocalDate, entries: List<ScheduleEntry>) -> Unit = { _, _ -> },
 ) : ViewModel() {
     private val _state = MutableStateFlow(
         LocalDate.now().let { today -> ScheduleUiState(weekStart = today.startOfWeek(), selectedDay = today) }
@@ -63,9 +67,39 @@ class ScheduleViewModel(
     /** Class whose check-in already opened by itself; never reopened, so returning to the app keeps a half-typed keyword. */
     private var autoOpenedId: String? = null
 
+    /** The widget asked for check-in before this week's schedule had loaded. */
+    private var checkInNowPending = false
+
     init {
         load(force = false)
     }
+
+    /** Opens check-in for the class happening now, even if it was dismissed before. Used by the home-screen widget. */
+    fun checkInNow() {
+        val now = LocalDateTime.now()
+        val today = now.toLocalDate()
+        val entries = weeks[today.startOfWeek()]
+        if (entries == null) {
+            // load() calls back here once this week arrives.
+            checkInNowPending = true
+            if (_state.value.weekStart != today.startOfWeek()) moveTo(today) else if (loadJob?.isActive != true) load(force = false)
+            return
+        }
+        checkInNowPending = false
+        moveTo(today)
+        val entry = currentClass(entries, now)
+        if (entry == null) {
+            val next = nextClass(entries, now)
+            val notice = if (next != null) "No class right now. Next: ${next.subject} at ${next.startTime}." else "No class right now."
+            _state.update { it.copy(notice = notice) }
+            return
+        }
+        autoOpenedId = entry.id
+        // Keep an open sheet for the same class so a half-typed keyword survives.
+        if (_checkIn.value?.entry?.id != entry.id) showCheckIn(entry, focusKeyword = true)
+    }
+
+    fun noticeShown() = _state.update { it.copy(notice = null) }
 
     /** Opens check-in for the class happening now, once per class. Called whenever the app comes to the foreground. */
     fun offerCurrentClass() {
@@ -156,7 +190,10 @@ class ScheduleViewModel(
                 val entries = api.weekSchedule(weekStart, weekStart.plusDays(6))
                 weeks[weekStart] = entries
                 _state.update { if (it.weekStart == weekStart) it.copy(entries = entries, loading = false) else it }
-                if (weekStart == LocalDate.now().startOfWeek()) offerCurrentClass()
+                if (weekStart == LocalDate.now().startOfWeek()) {
+                    onCurrentWeekLoaded(weekStart, entries)
+                    if (checkInNowPending) checkInNow() else offerCurrentClass()
+                }
             } catch (e: SessionExpiredException) {
                 _state.update { it.copy(loading = false, sessionExpired = true) }
             } catch (e: PortalException) {
@@ -167,5 +204,3 @@ class ScheduleViewModel(
         }
     }
 }
-
-private fun LocalDate.startOfWeek(): LocalDate = with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))

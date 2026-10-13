@@ -1,3 +1,8 @@
 <resources>
     <string name="app_name">CMC Check-in</string>
+
+    <string name="widget_description">Check in to the class happening now</string>
+    <string name="widget_label">Attendance</string>
+    <string name="widget_title">Check in to your class</string>
+    <string name="widget_action">Enter keyword</string>
 </resources>
