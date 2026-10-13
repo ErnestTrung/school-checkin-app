@@ -1,6 +1,7 @@
 package com.ernestnguyen.schoolcheckin.portal
 
 import java.time.LocalDate
+import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
 import java.time.format.DateTimeParseException
 import kotlinx.serialization.json.JsonArray
@@ -46,6 +47,24 @@ data class ScheduleEntry(
 
     internal val startMinutes: Int
         get() = (startHour.toIntOrNull() ?: 0) * 60 + (startMinute.toIntOrNull() ?: 0)
+
+    internal val endMinutes: Int
+        get() = (endHour.toIntOrNull() ?: 0) * 60 + (endMinute.toIntOrNull() ?: 0)
+}
+
+/** How long before a class starts it already counts as the current one. */
+internal const val EARLY_CHECK_IN_MINUTES = 15
+
+/**
+ * The class to check in to at [now]: today's non-exam session that is under way or starts within
+ * [EARLY_CHECK_IN_MINUTES]. When sessions overlap, the one that started last wins.
+ */
+internal fun currentClass(entries: List<ScheduleEntry>, now: LocalDateTime): ScheduleEntry? {
+    val minute = now.hour * 60 + now.minute
+    return entries
+        .filter { !it.isExam && it.date == now.toLocalDate() }
+        .filter { it.startMinutes - EARLY_CHECK_IN_MINUTES <= minute && minute < it.endMinutes }
+        .maxByOrNull { it.startMinutes }
 }
 
 internal val PORTAL_DATE: DateTimeFormatter = DateTimeFormatter.ofPattern("dd/MM/yyyy")

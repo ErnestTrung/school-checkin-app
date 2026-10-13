@@ -39,6 +39,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -46,14 +47,19 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.LifecycleStartEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.ernestnguyen.schoolcheckin.R
 import com.ernestnguyen.schoolcheckin.portal.ScheduleEntry
@@ -61,6 +67,7 @@ import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import java.time.format.TextStyle
 import java.util.Locale
+import kotlinx.coroutines.flow.first
 
 /** Same palette the portal uses to tell class sections apart. */
 private val CLASS_COLORS = listOf(
@@ -82,6 +89,10 @@ fun ScheduleScreen(
 
     LaunchedEffect(state.sessionExpired) {
         if (state.sessionExpired) onSessionExpired()
+    }
+    LifecycleStartEffect(viewModel) {
+        viewModel.offerCurrentClass()
+        onStopOrDispose {}
     }
 
     Scaffold(
@@ -279,14 +290,16 @@ private fun EntryCard(entry: ScheduleEntry, onClick: () -> Unit) {
 }
 
 @Composable
-private fun CheckInSheet(
+internal fun CheckInSheet(
     state: CheckInUiState,
     onSubmit: (String) -> Unit,
     onDismiss: () -> Unit,
 ) {
     val entry = state.entry
     var keyword by rememberSaveable(entry.id) { mutableStateOf("") }
-    ModalBottomSheet(onDismissRequest = onDismiss) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val focusRequester = remember { FocusRequester() }
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
         Column(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp).padding(bottom = 32.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -316,8 +329,17 @@ private fun CheckInSheet(
                 enabled = !state.sending,
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
                 keyboardActions = KeyboardActions(onDone = { onSubmit(keyword) }),
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().focusRequester(focusRequester),
             )
+            if (state.focusKeyword) {
+                val keyboard = LocalSoftwareKeyboardController.current
+                LaunchedEffect(entry.id) {
+                    // Wait until the sheet has finished opening; before that its window has no focus and the keyboard won't show.
+                    snapshotFlow { sheetState.isVisible }.first { it }
+                    focusRequester.requestFocus()
+                    keyboard?.show()
+                }
+            }
             Text(
                 "IP shown to the lecturer: " + when {
                     state.ip == null -> "looking up…"

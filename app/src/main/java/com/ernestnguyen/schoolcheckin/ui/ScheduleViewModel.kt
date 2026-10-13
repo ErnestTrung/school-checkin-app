@@ -7,9 +7,11 @@ import com.ernestnguyen.schoolcheckin.portal.PortalException
 import com.ernestnguyen.schoolcheckin.portal.PublicIp
 import com.ernestnguyen.schoolcheckin.portal.ScheduleEntry
 import com.ernestnguyen.schoolcheckin.portal.SessionExpiredException
+import com.ernestnguyen.schoolcheckin.portal.currentClass
 import java.io.IOException
 import java.time.DayOfWeek
 import java.time.LocalDate
+import java.time.LocalDateTime
 import java.time.temporal.TemporalAdjusters
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -34,6 +36,8 @@ data class ScheduleUiState(
 
 data class CheckInUiState(
     val entry: ScheduleEntry,
+    /** Opened by itself for the class happening now, so the keyword field takes focus straight away. */
+    val focusKeyword: Boolean = false,
     /** IP that will be reported; null while it is being looked up, blank if unknown. */
     val ip: String? = null,
     val sending: Boolean = false,
@@ -56,8 +60,29 @@ class ScheduleViewModel(
     private val weeks = mutableMapOf<LocalDate, List<ScheduleEntry>>()
     private var loadJob: Job? = null
 
+    /** Class whose check-in already opened by itself; never reopened, so returning to the app keeps a half-typed keyword. */
+    private var autoOpenedId: String? = null
+
     init {
         load(force = false)
+    }
+
+    /** Opens check-in for the class happening now, once per class. Called whenever the app comes to the foreground. */
+    fun offerCurrentClass() {
+        val now = LocalDateTime.now()
+        val today = now.toLocalDate()
+        val entries = weeks[today.startOfWeek()]
+        if (entries == null) {
+            // A new week may have begun while the app was in the background; load() offers again once it arrives.
+            if (_state.value.weekStart != today.startOfWeek()) moveTo(today)
+            return
+        }
+        if (_checkIn.value != null) return
+        val entry = currentClass(entries, now) ?: return
+        if (entry.id == autoOpenedId) return
+        autoOpenedId = entry.id
+        moveTo(today)
+        showCheckIn(entry, focusKeyword = true)
     }
 
     fun previousWeek() = moveTo(_state.value.selectedDay.minusWeeks(1))
@@ -70,8 +95,10 @@ class ScheduleViewModel(
 
     fun refresh() = load(force = true)
 
-    fun openCheckIn(entry: ScheduleEntry) {
-        _checkIn.value = CheckInUiState(entry)
+    fun openCheckIn(entry: ScheduleEntry) = showCheckIn(entry, focusKeyword = false)
+
+    private fun showCheckIn(entry: ScheduleEntry, focusKeyword: Boolean) {
+        _checkIn.value = CheckInUiState(entry, focusKeyword = focusKeyword)
         if (entry.isExam) return
         viewModelScope.launch {
             val ip = PublicIp.lookup() ?: fallbackIp
@@ -129,6 +156,7 @@ class ScheduleViewModel(
                 val entries = api.weekSchedule(weekStart, weekStart.plusDays(6))
                 weeks[weekStart] = entries
                 _state.update { if (it.weekStart == weekStart) it.copy(entries = entries, loading = false) else it }
+                if (weekStart == LocalDate.now().startOfWeek()) offerCurrentClass()
             } catch (e: SessionExpiredException) {
                 _state.update { it.copy(loading = false, sessionExpired = true) }
             } catch (e: PortalException) {
