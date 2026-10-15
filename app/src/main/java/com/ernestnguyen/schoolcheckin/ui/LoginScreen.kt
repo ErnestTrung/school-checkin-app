@@ -37,9 +37,6 @@ import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
 
 private const val LOGIN_URL = "$PORTAL_ORIGIN/congthongtin/login.aspx"
-
-/** Where the portal's own 401 handler sends the browser (`edu.system.strlogouturl`); ends the portal session only. */
-private const val LOGOUT_URL = "$PORTAL_ORIGIN/congthongtin/Logout.aspx"
 private const val PROBE_INTERVAL_MS = 700L
 
 /** How many probes to wait for the menu (and its "Lịch cá nhân" id) once a token exists. */
@@ -80,11 +77,7 @@ private class Probe(
 @SuppressLint("SetJavaScriptEnabled")
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun LoginScreen(
-    /** Token the portal just rejected; never handed back as a new session. */
-    expiredToken: String?,
-    onSignedIn: (Session) -> Unit,
-) {
+fun LoginScreen(onSignedIn: (Session) -> Unit) {
     val currentOnSignedIn by rememberUpdatedState(onSignedIn)
     var progress by remember { mutableIntStateOf(0) }
     var canGoBack by remember { mutableStateOf(false) }
@@ -127,7 +120,7 @@ fun LoginScreen(
                             }
                         }
 
-                        startSessionProbe(this, expiredToken) { session ->
+                        startSessionProbe(this) { session ->
                             CookieManager.getInstance().flush()
                             currentOnSignedIn(session)
                         }
@@ -150,16 +143,9 @@ fun LoginScreen(
     }
 }
 
-/**
- * Polls the page until the portal has a signed-in session, then reports it once.
- *
- * The portal renders the token from its server session, which can outlive the token itself, so
- * after an expiry the page may still carry [expiredToken]. That one is skipped and the portal
- * session ended once, leaving the Microsoft sign-in in place to issue a fresh token.
- */
-private fun startSessionProbe(webView: WebView, expiredToken: String?, onFound: (Session) -> Unit) {
+/** Polls the page until the portal has a signed-in session, then reports it once. */
+private fun startSessionProbe(webView: WebView, onFound: (Session) -> Unit) {
     var probesWithToken = 0
-    var loggedOut = false
     var done = false
     lateinit var tick: Runnable
     tick = Runnable {
@@ -170,13 +156,6 @@ private fun startSessionProbe(webView: WebView, expiredToken: String?, onFound: 
             val probe = parseProbe(raw)
             when {
                 probe == null -> webView.postDelayed(tick, PROBE_INTERVAL_MS)
-                probe.token == expiredToken -> {
-                    if (!loggedOut) {
-                        loggedOut = true
-                        webView.loadUrl(LOGOUT_URL)
-                    }
-                    webView.postDelayed(tick, PROBE_INTERVAL_MS)
-                }
                 (probe.menuLoaded && probe.chucNangId != null) || probesWithToken >= MENU_WAIT_PROBES -> {
                     done = true
                     onFound(

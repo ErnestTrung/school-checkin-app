@@ -11,7 +11,6 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.ernestnguyen.schoolcheckin.portal.PortalApi
@@ -38,13 +37,12 @@ class MainActivity : ComponentActivity() {
         setContent {
             SchoolCheckInTheme {
                 var session by remember { mutableStateOf(store.load()) }
-                var expiredToken by rememberSaveable { mutableStateOf<String?>(null) }
+                var signedInHere by remember { mutableStateOf(false) }
                 when (val current = session) {
                     null -> LoginScreen(
-                        expiredToken = expiredToken,
                         onSignedIn = {
                             store.save(it)
-                            expiredToken = null
+                            signedInHere = true
                             session = it
                             CheckInWidget.refresh(applicationContext)
                         },
@@ -52,7 +50,7 @@ class MainActivity : ComponentActivity() {
                     else -> {
                         val viewModel = viewModel(key = current.token) {
                             val api = PortalApi(current, userAgent) { url -> CookieManager.getInstance().getCookie(url) }
-                            ScheduleViewModel(api, fallbackIp = current.portalIp) { weekStart, entries ->
+                            ScheduleViewModel(api, fallbackIp = current.portalIp, freshSignIn = signedInHere) { weekStart, entries ->
                                 cache.save(weekStart, entries)
                                 CheckInWidget.refresh(applicationContext)
                             }
@@ -71,7 +69,6 @@ class MainActivity : ComponentActivity() {
                             // Keep cookies so Microsoft can sign straight back in.
                             onSessionExpired = {
                                 store.clear()
-                                expiredToken = current.token
                                 session = null
                                 CheckInWidget.refresh(applicationContext)
                             },

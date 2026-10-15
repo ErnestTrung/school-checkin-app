@@ -5,6 +5,7 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
 import java.time.LocalDate
+import java.util.Locale
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerializationException
@@ -18,6 +19,9 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.put
 
 internal const val PORTAL_ORIGIN = "https://iu.cmcu.edu.vn"
+
+/** The page whose scripts make the portal's API calls. */
+private const val PORTAL_PAGE = "$PORTAL_ORIGIN/congthongtin/Index.aspx"
 
 /** The part of Config.js `Init_API()` the app uses: action prefix (text before the first '_') → API base path. */
 private val API_BASES = mapOf(
@@ -111,12 +115,8 @@ class PortalApi(
                 connection.doOutput = true
                 connection.connectTimeout = 15_000
                 connection.readTimeout = 30_000
-                connection.setRequestProperty("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
-                connection.setRequestProperty("Accept", "application/json, text/javascript, */*; q=0.01")
-                connection.setRequestProperty("Authorization", "Bearer ${session.token}")
-                connection.setRequestProperty("User-Agent", userAgent)
-                connection.setRequestProperty("Origin", PORTAL_ORIGIN)
-                cookies(url)?.let { connection.setRequestProperty("Cookie", it) }
+                requestHeaders(session.token, userAgent, cookies(url), Locale.getDefault())
+                    .forEach { (name, value) -> connection.setRequestProperty(name, value) }
 
                 val body = fields.joinToString("&") { (key, value) ->
                     URLEncoder.encode(key, "UTF-8") + "=" + URLEncoder.encode(value, "UTF-8")
@@ -132,6 +132,22 @@ class PortalApi(
             }
         }
 }
+
+/**
+ * Headers for an API call. The API answers 401, even with a valid token, unless the request also
+ * carries an `Accept-Language` and a `Referer` from a portal page, as the portal's own XHRs do.
+ */
+internal fun requestHeaders(token: String, userAgent: String, cookie: String?, locale: Locale): List<Pair<String, String>> =
+    listOfNotNull(
+        "Content-Type" to "application/x-www-form-urlencoded; charset=UTF-8",
+        "Accept" to "application/json, text/javascript, */*; q=0.01",
+        "Accept-Language" to locale.toLanguageTag(),
+        "Authorization" to "Bearer $token",
+        "User-Agent" to userAgent,
+        "Origin" to PORTAL_ORIGIN,
+        "Referer" to PORTAL_PAGE,
+        cookie?.let { "Cookie" to it },
+    )
 
 internal fun apiUrl(action: String): String {
     val base = API_BASES[action.substringBefore('_')]

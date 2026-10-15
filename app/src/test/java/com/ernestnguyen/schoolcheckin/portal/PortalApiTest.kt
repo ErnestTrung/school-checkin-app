@@ -1,6 +1,7 @@
 package com.ernestnguyen.schoolcheckin.portal
 
 import java.time.LocalDate
+import java.util.Locale
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -23,6 +24,21 @@ class PortalApiTest {
             "https://iu.cmcu.edu.vn/chuyencanapi/api/CC_ThongTin/Them_QLSV_NguoiHoc_TuGhiNhan",
             apiUrl("CC_ThongTin/Them_QLSV_NguoiHoc_TuGhiNhan"),
         )
+    }
+
+    @Test
+    fun requestHeadersCarryWhatTheApiRequires() {
+        val headers = requestHeaders("tok", "UA", ".Auth=x", Locale.forLanguageTag("vi-VN")).toMap()
+        assertEquals("Bearer tok", headers["Authorization"])
+        assertEquals("UA", headers["User-Agent"])
+        assertEquals(".Auth=x", headers["Cookie"])
+        assertEquals("vi-VN", headers["Accept-Language"])
+        assertEquals("https://iu.cmcu.edu.vn/congthongtin/Index.aspx", headers["Referer"])
+    }
+
+    @Test
+    fun requestHeadersOmitCookieWhenThereIsNone() {
+        assertFalse(requestHeaders("tok", "UA", null, Locale.US).any { it.first == "Cookie" })
     }
 
     @Test

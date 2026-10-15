@@ -21,6 +21,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 private const val OFFLINE_MESSAGE = "Couldn't reach the portal. Check your connection and try again."
+private const val REJECTED_MESSAGE = "The portal turned down this sign-in. Try again, or sign out and back in."
 
 data class ScheduleUiState(
     val weekStart: LocalDate,
@@ -50,6 +51,8 @@ data class CheckInUiState(
 class ScheduleViewModel(
     private val api: PortalApi,
     private val fallbackIp: String,
+    /** The session comes straight from sign-in rather than from storage. */
+    private val freshSignIn: Boolean = false,
     /** Receives the current week whenever it loads, for the home-screen widget. */
     private val onCurrentWeekLoaded: (weekStart: LocalDate, entries: List<ScheduleEntry>) -> Unit = { _, _ -> },
 ) : ViewModel() {
@@ -69,6 +72,9 @@ class ScheduleViewModel(
 
     /** The widget asked for check-in before this week's schedule had loaded. */
     private var checkInNowPending = false
+
+    /** The portal has accepted this session at least once. */
+    private var sessionAccepted = false
 
     init {
         load(force = false)
@@ -154,10 +160,10 @@ class ScheduleViewModel(
             val ip = current.ip ?: PublicIp.lookup() ?: fallbackIp
             val outcome = try {
                 val message = api.checkIn(current.entry, keyword.trim(), ip)
+                sessionAccepted = true
                 current.copy(ip = ip, sending = false, result = message, succeeded = true)
             } catch (e: SessionExpiredException) {
-                _state.update { it.copy(sessionExpired = true) }
-                null
+                unauthorized()?.let { current.copy(ip = ip, sending = false, result = it, succeeded = false) }
             } catch (e: PortalException) {
                 current.copy(ip = ip, sending = false, result = e.message, succeeded = false)
             } catch (e: IOException) {
@@ -166,6 +172,17 @@ class ScheduleViewModel(
             _checkIn.update { if (it?.entry?.id == current.entry.id) outcome else it }
             if (outcome?.succeeded == true) load(force = true)
         }
+    }
+
+    /**
+     * Handles a 401. A session straight from sign-in that was never accepted has not expired, and
+     * signing in again would only fetch another one the portal turns down, so that is reported
+     * instead: returns the message to show, or null after flagging the session as expired.
+     */
+    private fun unauthorized(): String? {
+        if (freshSignIn && !sessionAccepted) return REJECTED_MESSAGE
+        _state.update { it.copy(loading = false, sessionExpired = true) }
+        return null
     }
 
     private fun moveTo(day: LocalDate) {
@@ -188,6 +205,7 @@ class ScheduleViewModel(
         loadJob = viewModelScope.launch {
             try {
                 val entries = api.weekSchedule(weekStart, weekStart.plusDays(6))
+                sessionAccepted = true
                 weeks[weekStart] = entries
                 _state.update { if (it.weekStart == weekStart) it.copy(entries = entries, loading = false) else it }
                 if (weekStart == LocalDate.now().startOfWeek()) {
@@ -195,7 +213,8 @@ class ScheduleViewModel(
                     if (checkInNowPending) checkInNow() else offerCurrentClass()
                 }
             } catch (e: SessionExpiredException) {
-                _state.update { it.copy(loading = false, sessionExpired = true) }
+                val message = unauthorized()
+                if (message != null) _state.update { it.copy(loading = false, error = message) }
             } catch (e: PortalException) {
                 _state.update { if (it.weekStart == weekStart) it.copy(loading = false, error = e.message) else it }
             } catch (e: IOException) {
